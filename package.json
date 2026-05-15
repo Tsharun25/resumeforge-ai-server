@@ -1,0 +1,32 @@
+{
+  "name": "resumeforge-ai-server",
+  "version": "1.0.0",
+  "description": "Backend API for ResumeForge AI SaaS",
+  "main": "src/server.js",
+  "type": "module",
+  "scripts": {
+    "dev": "nodemon src/server.js",
+    "start": "node src/server.js"
+  },
+  "keywords": [
+    "mern",
+    "resume-builder",
+    "ai-saas",
+    "express",
+    "mongodb"
+  ],
+  "author": "Harun Ahmed",
+  "license": "ISC",
+  "dependencies": {
+    "bcryptjs": "^3.0.2",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^5.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.19.4",
+    "openai": "^6.8.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.10"
+  }
+}
