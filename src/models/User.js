@@ -10,6 +10,7 @@ const userSchema = new mongoose.Schema(
       minlength: 2,
       maxlength: 80,
     },
+
     email: {
       type: String,
       required: [true, "Email is required"],
@@ -17,20 +18,50 @@ const userSchema = new mongoose.Schema(
       lowercase: true,
       trim: true,
     },
+
     password: {
       type: String,
       required: [true, "Password is required"],
       minlength: 6,
       select: false,
     },
+
+    role: {
+      type: String,
+      enum: ["user", "admin"],
+      default: "user",
+    },
+
     plan: {
       type: String,
-      enum: ["free", "pro"],
+      enum: ["free", "starter", "pro", "agency"],
       default: "free",
     },
+
     aiCredits: {
       type: Number,
       default: 10,
+      min: 0,
+    },
+
+    monthlyResumeLimit: {
+      type: Number,
+      default: 1,
+    },
+
+    monthlyCoverLetterLimit: {
+      type: Number,
+      default: 1,
+    },
+
+    pdfExportLimit: {
+      type: Number,
+      default: 3,
+    },
+
+    planExpiresAt: {
+      type: Date,
+      default: null,
     },
   },
   {

@@ -3,12 +3,14 @@ dotenv.config();
 
 import express from "express";
 import cors from "cors";
-
 import { connectDB } from "./config/db.js";
-
 import authRoutes from "./routes/auth.routes.js";
 import aiRoutes from "./routes/ai.routes.js";
 import resumeRoutes from "./routes/resume.routes.js";
+import statsRoutes from "./routes/stats.routes.js";
+import paymentRoutes from "./routes/payment.routes.js";
+import freelancerRoutes from "./routes/freelancer.routes.js";
+import ideaRoutes from "./routes/idea.routes.js";
 
 connectDB();
 
@@ -34,6 +36,10 @@ app.get("/", (req, res) => {
 app.use("/api/auth", authRoutes);
 app.use("/api/ai", aiRoutes);
 app.use("/api/resumes", resumeRoutes);
+app.use("/api/stats", statsRoutes);
+app.use("/api/payments", paymentRoutes);
+app.use("/api/freelancer", freelancerRoutes);
+app.use("/api/ideas", ideaRoutes);
 
 const PORT = process.env.PORT || 5000;
 

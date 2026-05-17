@@ -13,6 +13,17 @@ const generateToken = (userId) => {
   );
 };
 
+const formatUserResponse = (user) => {
+  return {
+    id: user._id,
+    fullName: user.fullName,
+    email: user.email,
+    role: user.role,
+    plan: user.plan,
+    aiCredits: user.aiCredits,
+  };
+};
+
 export const registerUser = async (req, res) => {
   try {
     const { fullName, email, password } = req.body;
@@ -52,23 +63,16 @@ export const registerUser = async (req, res) => {
       success: true,
       message: "Account created successfully.",
       token,
-      user: {
-        id: user._id,
-        fullName: user.fullName,
-        email: user.email,
-        plan: user.plan,
-        aiCredits: user.aiCredits,
-      },
+      user: formatUserResponse(user),
     });
   } catch (error) {
-  console.error("REGISTER FULL ERROR:");
-  console.error(error);
+    console.error("Register error:", error);
 
-  return res.status(500).json({
-    success: false,
-    message: error.message || "Server error while creating account.",
-  });
-}
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Server error while creating account.",
+    });
+  }
 };
 
 export const loginUser = async (req, res) => {
@@ -106,13 +110,7 @@ export const loginUser = async (req, res) => {
       success: true,
       message: "Logged in successfully.",
       token,
-      user: {
-        id: user._id,
-        fullName: user.fullName,
-        email: user.email,
-        plan: user.plan,
-        aiCredits: user.aiCredits,
-      },
+      user: formatUserResponse(user),
     });
   } catch (error) {
     console.error("Login error:", error);
