@@ -21,6 +21,10 @@ const formatUserResponse = (user) => {
     role: user.role,
     plan: user.plan,
     aiCredits: user.aiCredits,
+    monthlyResumeLimit: user.monthlyResumeLimit,
+    monthlyCoverLetterLimit: user.monthlyCoverLetterLimit,
+    pdfExportLimit: user.pdfExportLimit,
+    planExpiresAt: user.planExpiresAt,
   };
 };
 

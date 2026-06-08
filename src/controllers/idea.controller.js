@@ -1,5 +1,6 @@
 import User from "../models/User.js";
 import GeneratedDocument from "../models/GeneratedDocument.js";
+import { applyPlanToUser } from "../config/plans.js";
 
 const TOOL_CONFIG = {
   niche_ideas: {
@@ -33,21 +34,40 @@ const getUserId = (req) => {
   return req.user?._id || req.user?.id || req.user?.userId;
 };
 
+const getLanguageInstruction = (language) => {
+  if (language === "Bangla") {
+    return "Output must be fully in natural Bangla. Use practical Bangladeshi examples. Avoid unnecessary English unless technical terms are needed.";
+  }
+
+  if (language === "Bangla + English") {
+    return "Output must be in Bangla-English mixed style suitable for Bangladeshi students, freelancers, and creators.";
+  }
+
+  return "Output must be in clear, practical English.";
+};
+
+const getMarketInstruction = (marketFocus) => {
+  if (marketFocus === "Bangladesh") {
+    return "Focus strongly on Bangladesh market, local audience, local income reality, bKash/Nagad/payment limitations, local clients, Facebook groups, TikTok/Reels culture, and beginner-friendly execution.";
+  }
+
+  if (marketFocus === "Global") {
+    return "Focus on global remote market, Upwork, Fiverr, LinkedIn, international clients, global content trends, and scalable digital income.";
+  }
+
+  return "Balance Bangladesh market and global remote opportunities.";
+};
+
 const checkAndDowngradeExpiredPlan = async (user) => {
   if (!user) return user;
 
-  if (user.plan !== "Free" && user.planExpiresAt) {
+  if (user.plan !== "free" && user.planExpiresAt) {
     const now = new Date();
     const expiry = new Date(user.planExpiresAt);
 
     if (expiry < now) {
-      user.plan = "Free";
-      user.aiCredits = Math.max(Number(user.aiCredits || 0), 10);
-      user.monthlyResumeLimit = 1;
-      user.monthlyCoverLetterLimit = 3;
-      user.pdfExportLimit = 3;
+      applyPlanToUser(user, "free");
       user.planExpiresAt = null;
-
       await user.save();
     }
   }
@@ -58,32 +78,22 @@ const checkAndDowngradeExpiredPlan = async (user) => {
 const buildPrompt = ({ toolType, form }) => {
   const name = cleanText(form.name, "CareerPilot User");
   const currentStatus = cleanText(form.currentStatus, "Student / beginner");
-  const field = cleanText(form.field, "Web Development");
-  const skills = cleanText(
-    form.skills,
-    "HTML, CSS, JavaScript, React, Node.js"
-  );
-  const interests = cleanText(
-    form.interests,
-    "freelancing, remote jobs, SaaS products, AI tools"
-  );
-  const goal = cleanText(
-    form.goal,
-    "build a strong career and start earning online"
-  );
-  const targetIncome = cleanText(form.targetIncome, "৳30,000 - ৳100,000/month");
+  const field = cleanText(form.field, "Digital career / online income");
+  const skills = cleanText(form.skills, "basic computer, communication, learning mindset");
+  const interests = cleanText(form.interests, "freelancing, content creation, AI tools, online income");
+  const goal = cleanText(form.goal, "start earning online and build a strong future career");
+  const targetIncome = cleanText(form.targetIncome, "BDT 30,000 - BDT 100,000/month");
   const timeline = cleanText(form.timeline, "6 months");
-  const language = cleanText(form.language, "English");
-  const marketFocus = cleanText(
-    form.marketFocus,
-    "Bangladesh and global remote market"
-  );
+  const language = cleanText(form.language, "Bangla");
+  const marketFocus = cleanText(form.marketFocus, "Bangladesh");
+  const budget = cleanText(form.budget, "Low budget");
+  const skillLevel = cleanText(form.skillLevel, "Beginner");
   const extraDetails = cleanText(form.extraDetails, "No extra details.");
 
-  if (toolType === "niche_ideas") {
-    return `
-Generate profitable niche ideas for a Bangladesh-focused career and freelancing user.
+  const baseContext = `
+You are CareerPilot AI, a Bangladesh-aware career, freelancing, online income, and creator growth strategist.
 
+User Profile:
 Name: ${name}
 Current Status: ${currentStatus}
 Field: ${field}
@@ -92,396 +102,287 @@ Interests: ${interests}
 Goal: ${goal}
 Target Income: ${targetIncome}
 Timeline: ${timeline}
+Budget: ${budget}
+Skill Level: ${skillLevel}
 Market Focus: ${marketFocus}
 Language: ${language}
 Extra Details: ${extraDetails}
 
-Output format:
-1. Best Niche Ideas
-2. Why These Niches Fit
-3. Bangladesh Market Opportunity
-4. Global Freelance Opportunity
-5. Beginner-Friendly Service Ideas
-6. Portfolio Project Ideas
-7. First 30-Day Action Plan
-8. Risk / Difficulty Level
-9. Recommended Next Step
+Language Rule:
+${getLanguageInstruction(language)}
 
-Make it practical, realistic, and suitable for Bangladeshi students, freshers, job seekers, and freelancers.
+Market Rule:
+${getMarketInstruction(marketFocus)}
+
+Important Rules:
+- Be realistic, not fake motivational.
+- Give practical earning paths.
+- Include Bangladesh context when relevant.
+- Make advice useful for students, freshers, freelancers, and content creators.
+- Mention content creation opportunities if the user's interest includes Reels, TikTok, YouTube Shorts, Facebook, social media, creator, or content.
+- Do not claim live trend access.
+- Write in a clean markdown format.
+`;
+
+  if (toolType === "niche_ideas") {
+    return `
+${baseContext}
+
+Generate profitable niche ideas.
+
+Output format:
+# Niche Ideas Report
+
+## Profile Summary
+## Best Niche Ideas
+Give 7 niche ideas. For each niche include:
+- Why it fits
+- Bangladesh opportunity
+- Global opportunity
+- First service/product/content idea
+- Difficulty level
+- Income potential
+
+## Best Content Creator Niches
+Suggest short-form content niches for Facebook Reels, TikTok, YouTube Shorts, and Instagram Reels.
+
+## Beginner-Friendly Services
+## Portfolio / Proof-of-Work Ideas
+## Monetization Paths
+Include freelancing, digital products, affiliate, coaching, templates, sponsorship, and local services where relevant.
+
+## First 30-Day Action Plan
+## First 90-Day Growth Plan
+## Final Recommended Niche
 `;
   }
 
   if (toolType === "career_path") {
     return `
-Create a personalized career path for a Bangladesh-focused user.
+${baseContext}
 
-Name: ${name}
-Current Status: ${currentStatus}
-Field: ${field}
-Skills: ${skills}
-Interests: ${interests}
-Goal: ${goal}
-Target Income: ${targetIncome}
-Timeline: ${timeline}
-Market Focus: ${marketFocus}
-Language: ${language}
-Extra Details: ${extraDetails}
+Create a personalized career path.
 
 Output format:
-1. Recommended Career Direction
-2. Why This Path Fits
-3. Beginner to Advanced Roadmap
-4. Job / Freelance Opportunities
-5. Portfolio Strategy
-6. Learning Priorities
-7. Common Mistakes to Avoid
-8. 90-Day Career Action Plan
-9. Final Recommendation
+# Career Path Report
 
-Make it motivating but realistic.
+## Recommended Career Direction
+## Why This Path Fits
+## Bangladesh Career Opportunity
+## Global Remote Opportunity
+## Beginner to Advanced Roadmap
+## Freelance / Job / Creator Income Options
+## Portfolio Strategy
+## Learning Priorities
+## Common Mistakes to Avoid
+## 90-Day Career Action Plan
+## Final Recommendation
 `;
   }
 
   if (toolType === "skill_roadmap") {
     return `
-Create a skill roadmap for a Bangladesh-focused career growth user.
+${baseContext}
 
-Name: ${name}
-Current Status: ${currentStatus}
-Field: ${field}
-Current Skills: ${skills}
-Interests: ${interests}
-Goal: ${goal}
-Timeline: ${timeline}
-Market Focus: ${marketFocus}
-Language: ${language}
-Extra Details: ${extraDetails}
+Create a practical skill roadmap.
 
 Output format:
-1. Current Skill Level Assessment
-2. Must-Learn Skills
-3. High-Income Skills
-4. Weekly Learning Roadmap
-5. Practice Project Ideas
-6. Portfolio Checklist
-7. Free / Low-Cost Learning Strategy
-8. 30-Day, 60-Day, 90-Day Plan
-9. Final Advice
+# Skill Roadmap Report
 
-Keep it practical and action-focused.
+## Current Skill Level Assessment
+## Must-Learn Skills
+## High-Income Skills
+## Bangladesh-Friendly Learning Strategy
+## Weekly Learning Roadmap
+## Practice Project Ideas
+## Portfolio Checklist
+## Free / Low-Cost Resource Strategy
+## 30-Day Plan
+## 60-Day Plan
+## 90-Day Plan
+## Final Advice
 `;
   }
 
   if (toolType === "income_roadmap") {
     return `
-Create an income roadmap for a Bangladesh-focused user.
+${baseContext}
 
-Name: ${name}
-Current Status: ${currentStatus}
-Field: ${field}
-Skills: ${skills}
-Interests: ${interests}
-Goal: ${goal}
-Target Income: ${targetIncome}
-Timeline: ${timeline}
-Market Focus: ${marketFocus}
-Language: ${language}
-Extra Details: ${extraDetails}
+Create a realistic income roadmap.
 
 Output format:
-1. Realistic Income Path
-2. Short-Term Income Sources
-3. Freelance Service Ideas
-4. Job / Internship Strategy
-5. Digital Product / SaaS Ideas
-6. Monthly Earning Milestones
-7. First Client Strategy
-8. 90-Day Income Action Plan
-9. Final Recommendation
+# Income Roadmap Report
 
-Make it realistic for Bangladesh, not fake motivational advice.
+## Realistic Income Path
+## Short-Term Income Sources
+## Freelance Service Ideas
+## Content Creation Income Ideas
+## Local Bangladesh Income Ideas
+## Global Income Ideas
+## Monthly Earning Milestones
+## First Client Strategy
+## Monetization Plan
+## 90-Day Income Action Plan
+## Final Recommendation
 `;
   }
 
   return `
-Generate a practical career growth report.
+${baseContext}
 
-Name: ${name}
-Field: ${field}
-Skills: ${skills}
-Goal: ${goal}
+Generate a practical career growth report.
 `;
 };
 
 const buildMockOutput = ({ toolType, form }) => {
-  const name = cleanText(form.name, "Harun");
-  const currentStatus = cleanText(form.currentStatus, "Student / beginner");
-  const field = cleanText(form.field, "MERN Stack Development");
-  const skills = cleanText(
-    form.skills,
-    "React, Node.js, Express.js, MongoDB, Tailwind CSS, JWT, REST API"
-  );
-  const interests = cleanText(
-    form.interests,
-    "freelancing, SaaS products, AI tools, dashboards"
-  );
-  const goal = cleanText(
-    form.goal,
-    "build a strong career and earn from remote/freelance work"
-  );
-  const targetIncome = cleanText(form.targetIncome, "৳50,000/month");
-  const timeline = cleanText(form.timeline, "6 months");
+  const name = cleanText(form.name, "বন্ধু");
+  const field = cleanText(form.field, "Online Income / Digital Career");
+  const skills = cleanText(form.skills, "basic computer, communication, learning mindset");
+  const goal = cleanText(form.goal, "online income শুরু করা");
+  const targetIncome = cleanText(form.targetIncome, "৳৩০,০০০ - ৳১,০০,০০০/মাস");
+  const timeline = cleanText(form.timeline, "৬ মাস");
+  const language = cleanText(form.language, "Bangla");
+  const marketFocus = cleanText(form.marketFocus, "Bangladesh");
 
-  if (toolType === "niche_ideas") {
-    return `# Niche Ideas Report
+  if (language === "English") {
+    return `# Idea Radar Report
 
 ## Profile Summary
-Name: ${name}  
-Current Status: ${currentStatus}  
-Field: ${field}  
-Skills: ${skills}  
+Name: ${name}
+Field: ${field}
+Skills: ${skills}
 Goal: ${goal}
+Target Income: ${targetIncome}
+Timeline: ${timeline}
+Market Focus: ${marketFocus}
 
-## Best Niche Ideas
+## Best Direction
+Your best direction is to combine practical digital skills with a clear income path. Start with one specific offer, build proof, then expand into freelancing, content, or digital products.
 
-### 1. MERN SaaS Dashboard Development
-This is a strong niche because many startups, agencies, and small businesses need dashboards, admin panels, CRM tools, and internal systems.
+## Bangladesh Opportunity
+Bangladesh has strong demand for affordable digital services, Facebook/Reels content, small business websites, AI tool support, social media management, and freelancing support.
 
-### 2. AI Tool Frontend Development
-AI startups often need clean frontend interfaces for chatbots, document tools, resume builders, and analytics products.
+## Global Opportunity
+You can target global clients through Upwork, Fiverr, LinkedIn, and niche portfolio content.
 
-### 3. Ecommerce Admin Panel Development
-Bangladesh and global ecommerce businesses need product management, order management, payment tracking, and inventory dashboards.
+## Recommended Ideas
+1. Short-form content strategy service
+2. AI tool tutorial content
+3. Freelance profile optimization
+4. Small business landing pages
+5. Resume/CV and LinkedIn improvement service
+6. Social media content calendar service
+7. Digital template products
 
-### 4. Portfolio + Landing Page Development for Freelancers
-Students, creators, coaches, and freelancers need modern portfolio websites to build trust.
-
-### 5. Career-Tech Micro SaaS
-You can build small tools like resume builders, cover letter tools, job trackers, and skill roadmap generators.
-
-## Bangladesh Market Opportunity
-In Bangladesh, many small businesses, coaching centers, agencies, and freelancers need affordable digital tools. A developer who can build polished MERN apps has strong local and global potential.
-
-## Global Freelance Opportunity
-On Upwork and Fiverr, you can position yourself as a MERN dashboard and SaaS MVP developer instead of a generic web developer.
-
-## Beginner-Friendly Services
-- React landing page
-- Dashboard UI redesign
-- MERN CRUD app
-- Authentication setup
-- MongoDB integration
-- Admin panel development
-- Bug fixing
-
-## Portfolio Project Ideas
-- CRM SaaS dashboard
-- AI resume builder
-- Ecommerce admin panel
-- Freelancer proposal generator
-- Subscription billing dashboard
-
-## First 30-Day Action Plan
-Week 1: Polish your portfolio and choose 1 niche.  
-Week 2: Build one strong niche project.  
-Week 3: Create Upwork/Fiverr profile and gig.  
-Week 4: Send proposals daily and publish project case studies.
-
-## Recommended Next Step
-Focus on “MERN SaaS Dashboard Developer” as your first niche. It matches your skills and has both Bangladesh and global demand.`;
-  }
-
-  if (toolType === "career_path") {
-    return `# Career Path Report
-
-## Recommended Career Direction
-Based on your background in ${field}, your best path is:
-
-**MERN Stack Developer → SaaS Dashboard Developer → AI Career-Tech Product Builder**
-
-This direction fits your skills: ${skills}.
-
-## Why This Path Fits
-You already have a strong foundation for building real-world SaaS apps. Instead of only learning random technologies, you should focus on building production-style products.
-
-## Beginner to Advanced Roadmap
-
-### Stage 1: Strong Frontend Foundation
-- React components
-- Tailwind CSS
-- Responsive design
-- Form handling
-- API integration
-
-### Stage 2: Backend Confidence
-- Express routes
-- MongoDB models
-- JWT authentication
-- Middleware
-- Role-based access
-
-### Stage 3: SaaS Features
-- Subscription plans
-- Usage limits
-- Admin dashboard
-- Payment tracking
-- Analytics
-
-### Stage 4: AI Integration
-- OpenAI API
-- Prompt engineering
-- AI document generation
-- Usage/credit tracking
-
-## Job / Freelance Opportunities
-- Junior MERN Developer
-- React Developer
-- SaaS Dashboard Developer
-- Admin Panel Developer
-- Freelance MERN Developer
-- AI Tool Frontend Developer
-
-## Portfolio Strategy
-Build fewer but stronger projects. Each project should include authentication, dashboard, CRUD, payments or AI, and mobile responsiveness.
-
-## 90-Day Career Action Plan
-Month 1: Finish 2 portfolio projects.  
-Month 2: Create Upwork/Fiverr/LinkedIn presence.  
-Month 3: Apply to jobs and send 5-10 proposals daily.
-
-## Final Recommendation
-Your strongest positioning is: **Bangladesh-based MERN SaaS Developer building modern dashboards, AI tools, and business platforms.**`;
-  }
-
-  if (toolType === "skill_roadmap") {
-    return `# Skill Roadmap Report
-
-## Current Skill Level Assessment
-You are currently focused on ${field}. Your current skills include:
-
-${skills}
-
-This is a good foundation, but to become more market-ready, you need deeper project experience and stronger product thinking.
-
-## Must-Learn Skills
-- Advanced React patterns
-- React Router protected routes
-- API integration with Axios
-- Express middleware
-- MongoDB schema design
-- JWT authentication
-- Role-based dashboard
-- Payment workflow
-- Deployment and environment variables
-
-## High-Income Skills
-- SaaS architecture
-- AI API integration
-- Dashboard analytics
-- Payment gateway integration
-- Performance optimization
-- Client communication
-- Product UI/UX thinking
-
-## Weekly Learning Roadmap
-
-### Week 1
-Improve React component structure and responsive UI.
-
-### Week 2
-Practice backend CRUD, auth, and middleware.
-
-### Week 3
-Build one dashboard with analytics cards and charts.
-
-### Week 4
-Add AI generation, credits, and history tracking.
-
-### Week 5
-Add payment/subscription logic.
-
-### Week 6
-Deploy and write a case study.
-
-## Practice Project Ideas
-- AI Resume Builder
-- Freelancer Toolkit
-- Subscription Dashboard
-- Job Application Tracker
-- Admin Analytics Panel
-
-## 30/60/90-Day Plan
-30 Days: Build and polish one SaaS project.  
-60 Days: Add AI, payment, and admin features.  
-90 Days: Start applying for jobs and freelance work.
+## 30-Day Action Plan
+Week 1: Pick one niche and study 20 successful examples.
+Week 2: Build 3 sample works.
+Week 3: Publish content and create portfolio.
+Week 4: Start outreach and proposal sending.
 
 ## Final Advice
-Do not learn endlessly. Build production-style features and show them clearly in your portfolio.`;
+Do not try everything. Pick one clear niche and execute for 90 days.`;
   }
 
-  if (toolType === "income_roadmap") {
-    return `# Income Roadmap Report
+  if (language === "Bangla + English") {
+    return `# Idea Radar Report
 
-## Target Income
-Your target income: ${targetIncome}  
+## Profile Summary
+Name: ${name}
+Field: ${field}
+Skills: ${skills}
+Goal: ${goal}
+Target Income: ${targetIncome}
 Timeline: ${timeline}
+Market Focus: ${marketFocus}
 
-## Realistic Income Path
-Your best earning path is a combination of freelance services, portfolio-based job applications, and small SaaS experiments.
+## Best Direction
+তোমার জন্য best direction হলো practical digital skill + clear income offer combine করা। একসাথে অনেক কিছু না করে first 90 days একটা niche ধরে কাজ করা উচিত।
 
-## Short-Term Income Sources
-- Landing page development
-- Dashboard UI development
-- MERN bug fixing
-- Authentication setup
-- MongoDB integration
-- Admin panel development
+## Bangladesh Opportunity
+Bangladesh market-এ Facebook page, Reels/TikTok content, small business website, CV/LinkedIn service, social media management, AI tools tutorial—এই ধরনের service-এর ভালো demand আছে।
 
-## Freelance Service Ideas
-1. I will build a modern React landing page.
-2. I will create a MERN stack dashboard.
-3. I will fix React/Node/MongoDB bugs.
-4. I will build admin panels for small businesses.
-5. I will integrate JWT authentication in your app.
+## Global Opportunity
+Global market-এর জন্য Upwork, Fiverr, LinkedIn এবং portfolio content ব্যবহার করা যায়।
 
-## Monthly Earning Milestones
+## Recommended Ideas
+1. Reels/TikTok content idea service
+2. AI tools tutorial content
+3. Freelance profile optimization
+4. Small business landing page
+5. Resume/CV improvement service
+6. Social media content calendar
+7. Digital templates
 
-### Month 1
-Goal: Build portfolio and send proposals.  
-Possible income: ৳0 - ৳10,000
+## 30-Day Action Plan
+Week 1: একটা niche select করো।
+Week 2: ৩টা demo/sample বানাও।
+Week 3: Facebook/LinkedIn-এ publish করো।
+Week 4: client outreach শুরু করো।
 
-### Month 2
-Goal: Get small local or Fiverr/Upwork work.  
-Possible income: ৳10,000 - ৳30,000
+## Final Advice
+Random motivation না, daily execution দরকার। One niche, one offer, 90 days.`;
+  }
 
-### Month 3
-Goal: Close better projects and improve profile.  
-Possible income: ৳30,000 - ৳60,000
+  return `# আইডিয়া রাডার রিপোর্ট
 
-### Month 4-6
-Goal: Build repeat clients and stronger offers.  
-Possible income: ৳60,000+
+## প্রোফাইল সারাংশ
+নাম: ${name}
+ক্ষেত্র: ${field}
+স্কিল: ${skills}
+লক্ষ্য: ${goal}
+টার্গেট ইনকাম: ${targetIncome}
+সময়: ${timeline}
+মার্কেট: ${marketFocus}
 
-## First Client Strategy
-Start with small, specific services. Do not say “I can build any website.” Say “I build modern MERN dashboards for startups and small businesses.”
+## আপনার জন্য সেরা দিক
+আপনার জন্য সবচেয়ে ভালো পথ হলো এমন একটি niche বেছে নেওয়া যেখানে কম বাজেটে শুরু করা যায়, দ্রুত proof তৈরি করা যায় এবং freelancing/content/digital product দিয়ে income করা যায়।
 
-## 90-Day Income Action Plan
-Day 1-15: Polish portfolio.  
-Day 16-30: Create Fiverr gigs and Upwork profile.  
-Day 31-60: Send proposals daily.  
-Day 61-90: Improve offers based on client responses.
+## বাংলাদেশ মার্কেট সুযোগ
+বাংলাদেশে এখন Facebook page, Reels/TikTok content, small business website, CV/Resume service, AI tools tutorial, social media management এবং online course/template—এসবের চাহিদা বাড়ছে।
+
+## Global Opportunity
+আপনি চাইলে একই skill দিয়ে Upwork, Fiverr, LinkedIn এবং portfolio website-এর মাধ্যমে global client ধরতে পারবেন।
+
+## Recommended Ideas
+### ১. Reels/TikTok Content Idea Service
+যারা content creator, তাদের জন্য script, caption, hook এবং hashtag তৈরি করার service দিতে পারেন।
+
+### ২. AI Tools Tutorial Content
+বাংলায় AI tools নিয়ে short video বানালে student, freelancer এবং job seeker audience পাওয়া সম্ভব।
+
+### ৩. CV/Resume + LinkedIn Optimization
+বাংলাদেশের job seeker ও fresher-দের জন্য এটা practical service হতে পারে।
+
+### ৪. Small Business Landing Page
+Local business, coaching center, online shop-এর জন্য website/landing page বানানো যায়।
+
+### ৫. Social Media Content Calendar
+Small business বা creator-দের জন্য ৩০ দিনের content plan বানিয়ে paid service দেওয়া যায়।
+
+## Monetization Paths
+- Freelance service
+- Digital template
+- Affiliate marketing
+- Paid consultation
+- Sponsorship
+- Mini course
+- Local client service
+
+## ৩০ দিনের Action Plan
+Week 1: একটি niche select করুন এবং ২০টি successful example দেখুন।  
+Week 2: ৩টি sample work তৈরি করুন।  
+Week 3: Facebook, LinkedIn অথবা portfolio-তে publish করুন।  
+Week 4: প্রতিদিন ১০ জন potential client-কে message/proposal পাঠান।
+
+## ৯০ দিনের Growth Plan
+প্রথম ৩০ দিন proof তৈরি করুন।  
+পরের ৩০ দিন client outreach করুন।  
+শেষ ৩০ দিন pricing, portfolio এবং offer improve করুন।
 
 ## Final Recommendation
-Focus on one sellable offer first: **MERN SaaS Dashboard / Admin Panel Development**.`;
-  }
-
-  return `# Career Growth Report
-
-Field: ${field}  
-Skills: ${skills}  
-Interests: ${interests}
-
-Recommended next step: build a focused roadmap and take action for 30 days.`;
+শুরুতে একটি clear offer নিন: “আমি creator/business-এর জন্য Reels/TikTok content idea, script, caption এবং hashtag তৈরি করি।”  
+এটা Bangladesh market-এর জন্য practical এবং future income source হিসেবে ভালো।`;
 };
 
 const generateWithOpenAI = async ({ prompt }) => {
@@ -507,7 +408,7 @@ const generateWithOpenAI = async ({ prompt }) => {
           {
             role: "system",
             content:
-              "You are CareerPilot AI, a Bangladesh-focused AI Career Operating System. Generate realistic, practical, career-growth, freelancing, skill, and income roadmaps for Bangladeshi students, freshers, job seekers, and freelancers.",
+              "You are CareerPilot AI, a Bangladesh-aware career, freelancing, online income, and creator growth strategist.",
           },
           {
             role: "user",
@@ -515,7 +416,7 @@ const generateWithOpenAI = async ({ prompt }) => {
           },
         ],
         temperature: 0.75,
-        max_tokens: 1600,
+        max_tokens: 1800,
       }),
     });
 
@@ -588,7 +489,6 @@ export const generateIdeaReport = async (req, res) => {
     const prompt = buildPrompt({ toolType, form });
     const aiResult = await generateWithOpenAI({ prompt });
     const mockContent = buildMockOutput({ toolType, form });
-
     const finalContent = aiResult.content || mockContent;
     const source = aiResult.content ? aiResult.source : "mock";
 
@@ -601,7 +501,7 @@ export const generateIdeaReport = async (req, res) => {
       user: user._id,
       type: "idea_report",
       title: `${config.title} - ${field}`,
-      language: cleanText(form.language, "English"),
+      language: cleanText(form.language, "Bangla"),
       tone: "Strategic",
       source,
       input: {

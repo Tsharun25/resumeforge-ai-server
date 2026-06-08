@@ -1,5 +1,6 @@
 import User from "../models/User.js";
 import GeneratedDocument from "../models/GeneratedDocument.js";
+import { applyPlanToUser } from "../config/plans.js";
 
 const TOOL_CONFIG = {
   upwork_profile: {
@@ -43,16 +44,12 @@ const cleanText = (value, fallback = "") => {
 const checkAndDowngradeExpiredPlan = async (user) => {
   if (!user) return user;
 
-  if (user.plan !== "Free" && user.planExpiresAt) {
+  if (user.plan !== "free" && user.planExpiresAt) {
     const now = new Date();
     const expiry = new Date(user.planExpiresAt);
 
     if (expiry < now) {
-      user.plan = "Free";
-      user.aiCredits = Math.max(Number(user.aiCredits || 0), 10);
-      user.monthlyResumeLimit = 1;
-      user.monthlyCoverLetterLimit = 3;
-      user.pdfExportLimit = 3;
+      applyPlanToUser(user, "free");
       user.planExpiresAt = null;
 
       await user.save();

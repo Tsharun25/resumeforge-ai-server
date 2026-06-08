@@ -19,18 +19,16 @@ const checkAndConsumeCredit = async (userId) => {
     throw new Error("User not found.");
   }
 
-  if (user.plan === "free" && user.aiCredits <= 0) {
+  if (Number(user.aiCredits || 0) <= 0) {
     const error = new Error(
-      "You have used all free AI credits. Please upgrade your plan."
+      "You have used all AI credits. Please upgrade your plan."
     );
     error.statusCode = 403;
     throw error;
   }
 
-  if (user.plan === "free") {
-    user.aiCredits -= 1;
-    await user.save();
-  }
+  user.aiCredits = Math.max(0, Number(user.aiCredits || 0) - 1);
+  await user.save();
 
   return user;
 };

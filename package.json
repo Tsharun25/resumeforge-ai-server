@@ -1,7 +1,7 @@
 {
   "name": "resumeforge-ai-server",
   "version": "1.0.0",
-  "description": "Backend API for ResumeForge AI SaaS",
+  "description": "Backend API for CareerPilot AI SaaS",
   "main": "src/server.js",
   "type": "module",
   "scripts": {

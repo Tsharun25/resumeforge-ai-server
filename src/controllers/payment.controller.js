@@ -1,32 +1,6 @@
 import PaymentRequest from "../models/PaymentRequest.js";
 import User from "../models/User.js";
-
-const planPrices = {
-  starter: 199,
-  pro: 499,
-  agency: 999,
-};
-
-const planBenefits = {
-  starter: {
-    aiCredits: 20,
-    monthlyResumeLimit: 5,
-    monthlyCoverLetterLimit: 5,
-    pdfExportLimit: 10,
-  },
-  pro: {
-    aiCredits: 80,
-    monthlyResumeLimit: 30,
-    monthlyCoverLetterLimit: 30,
-    pdfExportLimit: 50,
-  },
-  agency: {
-    aiCredits: 250,
-    monthlyResumeLimit: 100,
-    monthlyCoverLetterLimit: 100,
-    pdfExportLimit: 200,
-  },
-};
+import { PAID_PLAN_IDS, applyPlanToUser, getPlanConfig } from "../config/plans.js";
 
 export const createPaymentRequest = async (req, res) => {
   try {
@@ -40,7 +14,7 @@ export const createPaymentRequest = async (req, res) => {
       });
     }
 
-    if (!planPrices[plan]) {
+    if (!PAID_PLAN_IDS.includes(plan)) {
       return res.status(400).json({
         success: false,
         message: "Invalid plan selected.",
@@ -63,7 +37,7 @@ export const createPaymentRequest = async (req, res) => {
     const paymentRequest = await PaymentRequest.create({
       user: req.user._id,
       plan,
-      amount: planPrices[plan],
+      amount: getPlanConfig(plan).price,
       paymentMethod,
       transactionId,
       senderNumber,
@@ -149,9 +123,7 @@ export const approvePaymentRequest = async (req, res) => {
       });
     }
 
-    const benefits = planBenefits[paymentRequest.plan];
-
-    if (!benefits) {
+    if (!PAID_PLAN_IDS.includes(paymentRequest.plan)) {
       return res.status(400).json({
         success: false,
         message: "Invalid subscription plan.",
@@ -170,12 +142,7 @@ export const approvePaymentRequest = async (req, res) => {
     const planExpiresAt = new Date();
     planExpiresAt.setMonth(planExpiresAt.getMonth() + 1);
 
-    user.plan = paymentRequest.plan;
-    user.aiCredits = benefits.aiCredits;
-    user.monthlyResumeLimit = benefits.monthlyResumeLimit;
-    user.monthlyCoverLetterLimit =
-      benefits.monthlyCoverLetterLimit;
-    user.pdfExportLimit = benefits.pdfExportLimit;
+    applyPlanToUser(user, paymentRequest.plan);
     user.planExpiresAt = planExpiresAt;
 
     await user.save();
