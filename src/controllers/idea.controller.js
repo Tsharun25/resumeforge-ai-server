@@ -1,6 +1,8 @@
 import User from "../models/User.js";
 import GeneratedDocument from "../models/GeneratedDocument.js";
 import { applyPlanToUser } from "../config/plans.js";
+import { reserveCredits, refundCredits } from "../services/credit.service.js";
+import { generateTextOutput } from "../services/openai.service.js";
 
 const TOOL_CONFIG = {
   niche_ideas: {
@@ -385,62 +387,13 @@ Week 4: প্রতিদিন ১০ জন potential client-কে message/p
 এটা Bangladesh market-এর জন্য practical এবং future income source হিসেবে ভালো।`;
 };
 
-const generateWithOpenAI = async ({ prompt }) => {
-  const apiKey = process.env.OPENAI_API_KEY;
-
-  if (!apiKey) {
-    return {
-      source: "mock",
-      content: null,
-    };
-  }
-
-  try {
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: process.env.OPENAI_MODEL || "gpt-4o-mini",
-        messages: [
-          {
-            role: "system",
-            content:
-              "You are CareerPilot AI, a Bangladesh-aware career, freelancing, online income, and creator growth strategist.",
-          },
-          {
-            role: "user",
-            content: prompt,
-          },
-        ],
-        temperature: 0.75,
-        max_tokens: 1800,
-      }),
-    });
-
-    if (!response.ok) {
-      return {
-        source: "mock",
-        content: null,
-      };
-    }
-
-    const data = await response.json();
-    const content = data?.choices?.[0]?.message?.content;
-
-    return {
-      source: content ? "openai" : "mock",
-      content: content || null,
-    };
-  } catch (error) {
-    return {
-      source: "mock",
-      content: null,
-    };
-  }
-};
+const generateWithAI = ({ userId, prompt }) =>
+  generateTextOutput({
+    userId,
+    instructions:
+      "You are CareerPilot AI, a Bangladesh-aware career, freelancing, online income, and creator growth strategist.",
+    input: prompt,
+  });
 
 export const generateIdeaReport = async (req, res) => {
   try {
@@ -474,26 +427,21 @@ export const generateIdeaReport = async (req, res) => {
 
     user = await checkAndDowngradeExpiredPlan(user);
 
-    const currentCredits = Number(user.aiCredits || 0);
     const creditsRequired = config.credits;
 
-    if (currentCredits < creditsRequired) {
-      return res.status(403).json({
-        success: false,
-        message: `Not enough AI credits. This tool needs ${creditsRequired} credits.`,
-        creditsRequired,
-        currentCredits,
-      });
+    const prompt = buildPrompt({ toolType, form });
+    const reservedUser = await reserveCredits(userId, creditsRequired);
+    let aiResult;
+
+    try {
+      aiResult = await generateWithAI({ userId, prompt });
+    } catch (error) {
+      await refundCredits(userId, creditsRequired);
+      throw error;
     }
 
-    const prompt = buildPrompt({ toolType, form });
-    const aiResult = await generateWithOpenAI({ prompt });
-    const mockContent = buildMockOutput({ toolType, form });
-    const finalContent = aiResult.content || mockContent;
-    const source = aiResult.content ? aiResult.source : "mock";
-
-    user.aiCredits = Math.max(0, currentCredits - creditsRequired);
-    await user.save();
+    const finalContent = aiResult.content;
+    const source = aiResult.source;
 
     const field = cleanText(form.field, "Career Growth");
 
@@ -520,7 +468,7 @@ export const generateIdeaReport = async (req, res) => {
       message: "Idea Radar report generated successfully.",
       data: {
         document,
-        remainingCredits: user.aiCredits,
+        remainingCredits: reservedUser.aiCredits,
         creditsUsed: creditsRequired,
         source,
       },
@@ -528,9 +476,12 @@ export const generateIdeaReport = async (req, res) => {
   } catch (error) {
     console.error("Generate idea report error:", error);
 
-    return res.status(500).json({
+    return res.status(error.statusCode || 500).json({
       success: false,
-      message: "Failed to generate Idea Radar report.",
+      message:
+        error.statusCode === 403
+          ? error.message
+          : "A reliable Idea Radar report could not be generated. No AI credits were charged.",
     });
   }
 };

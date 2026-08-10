@@ -30,12 +30,15 @@ const paymentRequestSchema = new mongoose.Schema(
       type: String,
       required: true,
       trim: true,
+      uppercase: true,
+      maxlength: 120,
     },
 
     senderNumber: {
       type: String,
       required: true,
       trim: true,
+      maxlength: 120,
     },
 
     status: {
@@ -49,11 +52,17 @@ const paymentRequestSchema = new mongoose.Schema(
       type: String,
       default: "",
       trim: true,
+      maxlength: 500,
     },
   },
   {
     timestamps: true,
   }
+);
+
+paymentRequestSchema.index(
+  { paymentMethod: 1, transactionId: 1 },
+  { unique: true }
 );
 
 const PaymentRequest = mongoose.model(

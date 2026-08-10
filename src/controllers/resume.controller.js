@@ -1,5 +1,24 @@
 import Resume from "../models/Resume.js";
 
+const PREMIUM_TEMPLATES = new Set(["modern", "minimal"]);
+
+const validateTemplateAccess = (user, template) => {
+  const requestedTemplate = ["classic", "modern", "minimal"].includes(template)
+    ? template
+    : "classic";
+
+  if (user.plan === "free" && PREMIUM_TEMPLATES.has(requestedTemplate)) {
+    const error = new Error(
+      "This template is available on Starter and Pro plans."
+    );
+    error.statusCode = 403;
+    error.code = "PREMIUM_TEMPLATE_REQUIRED";
+    throw error;
+  }
+
+  return requestedTemplate;
+};
+
 const getResumeLimitMessage = (plan, limit) => {
   const planNameMap = {
     free: "Free",
@@ -17,6 +36,10 @@ export const createResume = async (req, res) => {
   try {
     const userId = req.user._id;
     const resumeLimit = req.user.monthlyResumeLimit || 1;
+    const template = validateTemplateAccess(
+      req.user,
+      req.body.template || "classic"
+    );
 
     const currentResumeCount = await Resume.countDocuments({
       user: userId,
@@ -35,7 +58,7 @@ export const createResume = async (req, res) => {
 
     const resume = await Resume.create({
       user: userId,
-      template: req.body.template || "classic",
+      template,
       fullName: req.body.fullName || "",
       title: req.body.title || "",
       email: req.body.email || "",
@@ -64,8 +87,9 @@ export const createResume = async (req, res) => {
   } catch (error) {
     console.error("Create resume error:", error);
 
-    return res.status(500).json({
+    return res.status(error.statusCode || 500).json({
       success: false,
+      code: error.code,
       message: error.message || "Failed to save resume.",
     });
   }
@@ -128,8 +152,13 @@ export const getSingleResume = async (req, res) => {
 
 export const updateResume = async (req, res) => {
   try {
+    const template =
+      req.body.template === undefined
+        ? undefined
+        : validateTemplateAccess(req.user, req.body.template);
+
     const allowedUpdates = {
-      template: req.body.template,
+      template,
       fullName: req.body.fullName,
       title: req.body.title,
       email: req.body.email,
@@ -178,8 +207,9 @@ export const updateResume = async (req, res) => {
   } catch (error) {
     console.error("Update resume error:", error);
 
-    return res.status(500).json({
+    return res.status(error.statusCode || 500).json({
       success: false,
+      code: error.code,
       message: error.message || "Failed to update resume.",
     });
   }

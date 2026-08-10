@@ -33,7 +33,7 @@ export const protect = async (req, res, next) => {
 
     user = checkPlanExpiry(user);
 
-    await user.save();
+    if (user.isModified()) await user.save();
 
     req.user = user;
 

@@ -23,9 +23,19 @@ export const createRateLimiter = ({
   }
 
   const bucket = stores.get(storeKey);
+  let requestsSinceSweep = 0;
 
   return (req, res, next) => {
     const now = Date.now();
+    requestsSinceSweep += 1;
+
+    if (requestsSinceSweep >= 100) {
+      for (const [entryKey, entry] of bucket.entries()) {
+        if (entry.resetAt <= now) bucket.delete(entryKey);
+      }
+      requestsSinceSweep = 0;
+    }
+
     const key = getClientKey(req);
     const record = bucket.get(key);
 
@@ -51,3 +61,9 @@ export const createRateLimiter = ({
     next();
   };
 };
+
+export const aiGenerationLimiter = createRateLimiter({
+  windowMs: 60 * 1000,
+  max: 12,
+  message: "Too many AI requests. Please wait a moment and try again.",
+});

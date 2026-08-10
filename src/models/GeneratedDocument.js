@@ -40,8 +40,8 @@ const generatedDocumentSchema = new mongoose.Schema(
     },
     source: {
       type: String,
-      enum: ["openai", "mock"],
-      default: "mock",
+      enum: ["openai", "gemini", "mock"],
+      default: "openai",
     },
     input: {
       type: Object,

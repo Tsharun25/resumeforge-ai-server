@@ -29,7 +29,10 @@ export const PLAN_CONFIG = {
   },
 };
 
-export const PAID_PLAN_IDS = ["starter", "pro", "agency"];
+// Agency stays in the data model for future migration, but is not sold until
+// the promised multi-client workspace is implemented.
+export const PAID_PLAN_IDS = ["starter", "pro"];
+export const ACTIVATABLE_PLAN_IDS = [...PAID_PLAN_IDS, "agency"];
 
 export const getPlanConfig = (plan) => PLAN_CONFIG[plan] || PLAN_CONFIG.free;
 

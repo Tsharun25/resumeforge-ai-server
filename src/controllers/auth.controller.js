@@ -8,7 +8,7 @@ const generateToken = (userId) => {
     },
     process.env.JWT_SECRET,
     {
-      expiresIn: "7d",
+      expiresIn: process.env.JWT_EXPIRES_IN || "7d",
     }
   );
 };
@@ -30,7 +30,9 @@ const formatUserResponse = (user) => {
 
 export const registerUser = async (req, res) => {
   try {
-    const { fullName, email, password } = req.body;
+    const fullName = String(req.body.fullName || "").trim().slice(0, 80);
+    const email = String(req.body.email || "").trim().toLowerCase().slice(0, 254);
+    const password = String(req.body.password || "");
 
     if (!fullName || !email || !password) {
       return res.status(400).json({
@@ -39,10 +41,17 @@ export const registerUser = async (req, res) => {
       });
     }
 
-    if (password.length < 6) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       return res.status(400).json({
         success: false,
-        message: "Password must be at least 6 characters.",
+        message: "Please enter a valid email address.",
+      });
+    }
+
+    if (password.length < 8) {
+      return res.status(400).json({
+        success: false,
+        message: "Password must be at least 8 characters.",
       });
     }
 
@@ -72,16 +81,20 @@ export const registerUser = async (req, res) => {
   } catch (error) {
     console.error("Register error:", error);
 
-    return res.status(500).json({
+    return res.status(error?.code === 11000 ? 409 : 500).json({
       success: false,
-      message: error.message || "Server error while creating account.",
+      message:
+        error?.code === 11000
+          ? "User already exists with this email."
+          : "Server error while creating account.",
     });
   }
 };
 
 export const loginUser = async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const email = String(req.body.email || "").trim().toLowerCase().slice(0, 254);
+    const password = String(req.body.password || "");
 
     if (!email || !password) {
       return res.status(400).json({
@@ -129,6 +142,6 @@ export const loginUser = async (req, res) => {
 export const getMe = async (req, res) => {
   return res.status(200).json({
     success: true,
-    user: req.user,
+    user: formatUserResponse(req.user),
   });
 };

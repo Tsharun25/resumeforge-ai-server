@@ -1,10 +1,55 @@
+import mongoose from "mongoose";
 import PaymentRequest from "../models/PaymentRequest.js";
 import User from "../models/User.js";
-import { PAID_PLAN_IDS, applyPlanToUser, getPlanConfig } from "../config/plans.js";
+import {
+  ACTIVATABLE_PLAN_IDS,
+  PAID_PLAN_IDS,
+  applyPlanToUser,
+  getPlanConfig,
+} from "../config/plans.js";
+
+const PAYMENT_METHODS = new Set([
+  "bKash",
+  "Nagad",
+  "Rocket",
+  "Tap",
+  "Upay",
+  "Bank Transfer",
+]);
+
+const cleanText = (value, maxLength) =>
+  String(value || "").trim().slice(0, maxLength);
+
+const createHttpError = (message, statusCode) => {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
+};
+
+const getNextExpiry = (currentExpiry, isRenewal) => {
+  const now = new Date();
+  const current = currentExpiry ? new Date(currentExpiry) : null;
+  const base = isRenewal && current && current > now ? current : now;
+  const next = new Date(base);
+  const targetMonth = next.getUTCMonth() + 1;
+
+  next.setUTCDate(1);
+  next.setUTCMonth(targetMonth);
+  const lastDay = new Date(
+    Date.UTC(next.getUTCFullYear(), next.getUTCMonth() + 1, 0)
+  ).getUTCDate();
+  next.setUTCDate(Math.min(base.getUTCDate(), lastDay));
+
+  return next;
+};
 
 export const createPaymentRequest = async (req, res) => {
   try {
-    const { plan, paymentMethod, transactionId, senderNumber, note } = req.body;
+    const plan = cleanText(req.body.plan, 30).toLowerCase();
+    const paymentMethod = cleanText(req.body.paymentMethod, 40);
+    const transactionId = cleanText(req.body.transactionId, 120).toUpperCase();
+    const senderNumber = cleanText(req.body.senderNumber, 120);
+    const note = cleanText(req.body.note, 500);
 
     if (!plan || !paymentMethod || !transactionId || !senderNumber) {
       return res.status(400).json({
@@ -21,6 +66,13 @@ export const createPaymentRequest = async (req, res) => {
       });
     }
 
+    if (!PAYMENT_METHODS.has(paymentMethod)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid payment method selected.",
+      });
+    }
+
     const existingPending = await PaymentRequest.findOne({
       user: req.user._id,
       status: "pending",
@@ -31,6 +83,18 @@ export const createPaymentRequest = async (req, res) => {
         success: false,
         message:
           "You already have a pending payment request. Please wait for admin approval.",
+      });
+    }
+
+    const reusedTransaction = await PaymentRequest.exists({
+      paymentMethod,
+      transactionId,
+    });
+
+    if (reusedTransaction) {
+      return res.status(409).json({
+        success: false,
+        message: "This transaction ID has already been submitted.",
       });
     }
 
@@ -53,9 +117,12 @@ export const createPaymentRequest = async (req, res) => {
   } catch (error) {
     console.error("Create payment request error:", error);
 
-    return res.status(500).json({
+    return res.status(error?.code === 11000 ? 409 : 500).json({
       success: false,
-      message: error.message || "Failed to submit payment request.",
+      message:
+        error?.code === 11000
+          ? "This transaction ID has already been submitted."
+          : "Failed to submit payment request.",
     });
   }
 };
@@ -106,49 +173,42 @@ export const getAllPaymentRequests = async (req, res) => {
 };
 
 export const approvePaymentRequest = async (req, res) => {
+  const session = await mongoose.startSession();
+
   try {
-    const paymentRequest = await PaymentRequest.findById(req.params.id);
+    let paymentRequest;
+    let user;
 
-    if (!paymentRequest) {
-      return res.status(404).json({
-        success: false,
-        message: "Payment request not found.",
-      });
-    }
+    await session.withTransaction(async () => {
+      paymentRequest = await PaymentRequest.findById(req.params.id).session(session);
 
-    if (paymentRequest.status !== "pending") {
-      return res.status(400).json({
-        success: false,
-        message: "This payment request has already been processed.",
-      });
-    }
+      if (!paymentRequest) {
+        throw createHttpError("Payment request not found.", 404);
+      }
 
-    if (!PAID_PLAN_IDS.includes(paymentRequest.plan)) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid subscription plan.",
-      });
-    }
+      if (paymentRequest.status !== "pending") {
+        throw createHttpError("This payment request has already been processed.", 409);
+      }
 
-    const user = await User.findById(paymentRequest.user);
+      if (!ACTIVATABLE_PLAN_IDS.includes(paymentRequest.plan)) {
+        throw createHttpError("Invalid subscription plan.", 400);
+      }
 
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: "User not found.",
-      });
-    }
+      user = await User.findById(paymentRequest.user).session(session);
 
-    const planExpiresAt = new Date();
-    planExpiresAt.setMonth(planExpiresAt.getMonth() + 1);
+      if (!user) throw createHttpError("User not found.", 404);
 
-    applyPlanToUser(user, paymentRequest.plan);
-    user.planExpiresAt = planExpiresAt;
+      const isRenewal = user.plan === paymentRequest.plan;
+      const planExpiresAt = getNextExpiry(user.planExpiresAt, isRenewal);
 
-    await user.save();
+      applyPlanToUser(user, paymentRequest.plan);
+      user.planExpiresAt = planExpiresAt;
 
-    paymentRequest.status = "approved";
-    await paymentRequest.save();
+      await user.save({ session });
+
+      paymentRequest.status = "approved";
+      await paymentRequest.save({ session });
+    });
 
     return res.status(200).json({
       success: true,
@@ -159,37 +219,38 @@ export const approvePaymentRequest = async (req, res) => {
   } catch (error) {
     console.error("Approve payment error:", error);
 
-    return res.status(500).json({
+    return res.status(error.statusCode || 500).json({
       success: false,
-      message:
-        error.message || "Failed to approve payment request.",
+      message: error.statusCode
+        ? error.message
+        : "Failed to approve payment request.",
     });
+  } finally {
+    await session.endSession();
   }
 };
 
 export const rejectPaymentRequest = async (req, res) => {
   try {
-    const { note } = req.body;
+    const note = cleanText(req.body.note, 500);
+    const update = { status: "rejected" };
+    if (note) update.note = note;
 
-    const paymentRequest = await PaymentRequest.findById(req.params.id);
+    const paymentRequest = await PaymentRequest.findOneAndUpdate(
+      { _id: req.params.id, status: "pending" },
+      { $set: update },
+      { new: true, runValidators: true }
+    );
 
     if (!paymentRequest) {
-      return res.status(404).json({
+      const exists = await PaymentRequest.exists({ _id: req.params.id });
+      return res.status(exists ? 409 : 404).json({
         success: false,
-        message: "Payment request not found.",
+        message: exists
+          ? "This payment request has already been processed."
+          : "Payment request not found.",
       });
     }
-
-    if (paymentRequest.status !== "pending") {
-      return res.status(400).json({
-        success: false,
-        message: "This payment request has already been processed.",
-      });
-    }
-
-    paymentRequest.status = "rejected";
-    paymentRequest.note = note || paymentRequest.note;
-    await paymentRequest.save();
 
     return res.status(200).json({
       success: true,

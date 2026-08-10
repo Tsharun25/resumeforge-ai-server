@@ -1,48 +1,22 @@
-import OpenAI from "openai";
 import GeneratedDocument from "../models/GeneratedDocument.js";
-import User from "../models/User.js";
+import { reserveCredits, refundCredits } from "../services/credit.service.js";
+import { generateStructuredOutput } from "../services/openai.service.js";
 
-const getOpenAIClient = () => {
-  if (!process.env.OPENAI_API_KEY) {
-    return null;
-  }
+const AI_CREDIT_COST = 1;
 
-  return new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY,
-  });
-};
-
-const checkAndConsumeCredit = async (userId) => {
-  const user = await User.findById(userId);
-
-  if (!user) {
-    throw new Error("User not found.");
-  }
-
-  if (Number(user.aiCredits || 0) <= 0) {
-    const error = new Error(
-      "You have used all AI credits. Please upgrade your plan."
-    );
-    error.statusCode = 403;
-    throw error;
-  }
-
-  user.aiCredits = Math.max(0, Number(user.aiCredits || 0) - 1);
-  await user.save();
-
-  return user;
-};
+const cleanText = (value, maxLength = 4000) =>
+  String(value || "").trim().slice(0, maxLength);
 
 const getLanguageInstruction = (language) => {
   if (language === "Bangla") {
-    return "Write the output in natural, professional Bangla.";
+    return "Write in natural professional Bangla script. Keep unavoidable job titles, product names, and technical terms in English.";
   }
 
   if (language === "Bangla + English") {
-    return "Write the output in Bangla-English mixed style, suitable for Bangladeshi users.";
+    return "Write in a natural professional Bangla-English mixed style suitable for Bangladesh, without awkward word-by-word mixing.";
   }
 
-  return "Write the output in professional English.";
+  return "Write in concise, natural professional English.";
 };
 
 const saveGeneratedDocument = async ({
@@ -51,9 +25,9 @@ const saveGeneratedDocument = async ({
   title,
   language,
   tone,
-  source,
   input,
   output,
+  source = "openai",
 }) => {
   try {
     await GeneratedDocument.create({
@@ -71,221 +45,175 @@ const saveGeneratedDocument = async ({
   }
 };
 
-const generateMockResumeContent = ({
-  jobTitle,
-  experienceLevel,
-  skills,
-  targetRole,
-  language = "English",
-}) => {
-  const role = targetRole || jobTitle;
+const resumeSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    summary: { type: "string" },
+    optimizedSkills: {
+      type: "array",
+      items: { type: "string" },
+    },
+    experienceDescription: { type: "string" },
+    projectDescription: { type: "string" },
+    matchScore: { type: "integer", minimum: 0, maximum: 100 },
+    matchedKeywords: {
+      type: "array",
+      items: { type: "string" },
+    },
+    missingKeywords: {
+      type: "array",
+      items: { type: "string" },
+    },
+    strengths: {
+      type: "array",
+      items: { type: "string" },
+    },
+    improvements: {
+      type: "array",
+      items: { type: "string" },
+    },
+    truthCheckQuestions: {
+      type: "array",
+      items: { type: "string" },
+    },
+    recruiterMessage: { type: "string" },
+  },
+  required: [
+    "summary",
+    "optimizedSkills",
+    "experienceDescription",
+    "projectDescription",
+    "matchScore",
+    "matchedKeywords",
+    "missingKeywords",
+    "strengths",
+    "improvements",
+    "truthCheckQuestions",
+    "recruiterMessage",
+  ],
+};
 
-  if (language === "Bangla") {
+const coverLetterSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    coverLetter: { type: "string" },
+    matchedKeywords: {
+      type: "array",
+      items: { type: "string" },
+    },
+    missingInformation: {
+      type: "array",
+      items: { type: "string" },
+    },
+  },
+  required: ["coverLetter", "matchedKeywords", "missingInformation"],
+};
+
+const runCreditedGeneration = async ({ userId, generate }) => {
+  const user = await reserveCredits(userId, AI_CREDIT_COST);
+
+  try {
+    const output = await generate();
     return {
-      summary: `${jobTitle} হিসেবে ${experienceLevel} পর্যায়ের অভিজ্ঞতা নিয়ে আধুনিক, responsive এবং scalable web application তৈরি করতে আগ্রহী। ${skills} ব্যবহার করে clean UI, reusable component, REST API integration এবং user-friendly digital product তৈরি করার দক্ষতা রয়েছে। বাস্তব ব্যবসায়িক সমস্যা সমাধানে reliable full-stack development করতে আগ্রহী।`,
-
-      experienceDescription: `${skills} ব্যবহার করে client এবং portfolio project-এর জন্য modern web application তৈরি ও maintain করেছি। Responsive interface, authentication flow, REST API integration, dashboard এবং reusable component তৈরি করার মাধ্যমে product quality, performance এবং user experience উন্নত করেছি।`,
-
-      projectDescription: `${role} লক্ষ্য করে একটি professional project তৈরি করেছি যেখানে modern responsive UI, secure authentication, clean dashboard experience, reusable architecture এবং production-ready code structure ব্যবহার করা হয়েছে। Projectটি scalability, performance এবং real-world client requirements মাথায় রেখে তৈরি করা হয়েছে।`,
+      output,
+      provider: output.__provider || "openai",
+      remainingCredits: user.aiCredits,
     };
+  } catch (error) {
+    await refundCredits(userId, AI_CREDIT_COST);
+    throw error;
   }
-
-  if (language === "Bangla + English") {
-    return {
-      summary: `Results-driven ${jobTitle} with ${experienceLevel.toLowerCase()}-level experience in building modern, responsive, and scalable web applications. ${skills} নিয়ে strong hands-on experience আছে, especially clean UI, REST API integration, dashboard, authentication flow এবং user-friendly SaaS product development এ।`,
-
-      experienceDescription: `Developed and maintained modern web applications using ${skills}. Responsive frontend, secure authentication, REST API integration, dashboard UI এবং reusable components build করেছি while improving performance, usability, and overall product quality for ${role} requirements.`,
-
-      projectDescription: `Built a professional ${role} project with modern responsive UI, secure authentication, clean dashboard experience, reusable architecture এবং production-ready code structure. Focus ছিল scalability, performance, polished design এবং real client/business requirements.`,
-    };
-  }
-
-  return {
-    summary: `Results-driven ${jobTitle} with ${experienceLevel.toLowerCase()}-level experience building modern, responsive, and scalable web applications. Skilled in ${skills}, with a strong focus on clean UI, performance, reusable components, and user-friendly digital experiences. Passionate about solving real business problems through reliable full-stack development.`,
-
-    experienceDescription: `Developed and maintained modern web applications for clients and portfolio projects using ${skills}. Built responsive interfaces, REST API integrations, authentication flows, dashboards, and reusable components while improving performance, usability, and overall product quality for ${role} requirements.`,
-
-    projectDescription: `Built a professional ${role} project featuring a modern responsive UI, secure authentication, clean dashboard experience, reusable architecture, and production-ready code structure. Focused on scalability, performance, polished design, and real-world client requirements.`,
-  };
 };
 
 export const generateResumeContent = async (req, res) => {
   try {
     const {
       jobTitle,
+      targetRole,
       experienceLevel,
       skills,
-      targetRole,
+      achievements,
+      jobDescription,
+      resumeData = {},
       language = "English",
       tone = "Professional",
     } = req.body;
 
-    if (!jobTitle || !experienceLevel || !skills) {
+    if (!cleanText(targetRole || jobTitle) || !cleanText(experienceLevel) || !cleanText(skills)) {
       return res.status(400).json({
         success: false,
-        message: "Job title, experience level, and skills are required.",
+        message: "Target role, experience level, and skills are required.",
       });
     }
 
-    const user = await checkAndConsumeCredit(req.user._id);
-    const openai = getOpenAIClient();
+    const safeInput = {
+      targetRole: cleanText(targetRole || jobTitle, 160),
+      experienceLevel: cleanText(experienceLevel, 120),
+      skills: cleanText(skills, 2500),
+      achievements: cleanText(achievements, 4000),
+      jobDescription: cleanText(jobDescription, 15000),
+      resumeData: {
+        fullName: cleanText(resumeData.fullName, 120),
+        title: cleanText(resumeData.title, 120),
+        summary: cleanText(resumeData.summary, 2500),
+        skills: Array.isArray(resumeData.skills)
+          ? resumeData.skills.map((item) => cleanText(item, 120)).filter(Boolean).slice(0, 40)
+          : [],
+        experience: Array.isArray(resumeData.experience)
+          ? resumeData.experience.slice(0, 10)
+          : [],
+        projects: Array.isArray(resumeData.projects)
+          ? resumeData.projects.slice(0, 10)
+          : [],
+        education: Array.isArray(resumeData.education)
+          ? resumeData.education.slice(0, 10)
+          : [],
+      },
+      language,
+      tone,
+    };
 
-    if (!openai) {
-      const output = generateMockResumeContent({
-        jobTitle,
-        experienceLevel,
-        skills,
-        targetRole,
-        language,
-        tone,
-      });
+    const { output, provider, remainingCredits } = await runCreditedGeneration({
+      userId: req.user._id,
+      generate: () =>
+        generateStructuredOutput({
+          userId: req.user._id,
+          schemaName: "careerpilot_resume_optimization",
+          schema: resumeSchema,
+          instructions: `You are CareerPilot AI, a rigorous resume strategist for Bangladesh and international job markets. Create ATS-readable, job-specific content using only facts supplied by the candidate. Never invent employers, dates, degrees, projects, responsibilities, metrics, certifications, or skills. Treat the job description as requirements, not as facts about the candidate. Put unsupported requirements in missingKeywords or truthCheckQuestions, never in the resume. If experience or project evidence is missing, return an empty description and ask concise truth-check questions. ${getLanguageInstruction(language)}`,
+          input: `Optimize this candidate for the target role and evaluate the match.\n\n${JSON.stringify(safeInput, null, 2)}\n\nRules:\n- Summary: 60-90 words and specific to supplied evidence.\n- optimizedSkills: only skills the candidate explicitly supplied.\n- experienceDescription and projectDescription: concise ATS-friendly bullet-style lines separated by newlines; return an empty string when evidence is unavailable.\n- matchScore must be evidence-based; a missing job description means a conservative general-readiness score.\n- missingKeywords are job requirements not evidenced by the candidate.\n- recruiterMessage: 50-80 words, truthful and ready to send.`,
+        }),
+    });
 
-      await saveGeneratedDocument({
-        userId: req.user._id,
-        type: "resume",
-        title: jobTitle,
-        language,
-        tone,
-        source: "mock",
-        input: {
-          jobTitle,
-          experienceLevel,
-          skills,
-          targetRole,
-        },
-        output,
-      });
+    await saveGeneratedDocument({
+      userId: req.user._id,
+      type: "resume",
+      title: safeInput.targetRole,
+      language,
+      tone,
+      input: safeInput,
+      output,
+      source: provider,
+    });
 
-      return res.status(200).json({
-        success: true,
-        source: "mock",
-        remainingCredits: user.aiCredits,
-        data: output,
-      });
-    }
-
-    try {
-      const prompt = `
-You are an expert resume writer for Bangladesh and Asia focused job seekers, freelancers, and students.
-
-Candidate details:
-Job Title: ${jobTitle}
-Experience Level: ${experienceLevel}
-Skills: ${skills}
-Target Role: ${targetRole || jobTitle}
-Output Language: ${language}
-Output Tone: ${tone}
-
-Language instruction:
-${getLanguageInstruction(language)}
-
-Tone instruction:
-Use a ${tone} tone.
-
-Return ONLY valid JSON with this structure:
-{
-  "summary": "A polished 3-4 line professional resume summary.",
-  "experienceDescription": "A strong achievement-focused experience paragraph.",
-  "projectDescription": "A polished project description suitable for a resume."
-}
-
-Rules:
-- Make it ATS-friendly.
-- Keep it suitable for Bangladesh/Asia job market.
-- Use strong action verbs.
-- Keep it concise and practical.
-- Do not include markdown.
-- Do not include extra text outside JSON.
-`;
-
-      const completion = await openai.chat.completions.create({
-        model: "gpt-4.1-mini",
-        messages: [
-          {
-            role: "system",
-            content:
-              "You write ATS-friendly career content and always return valid JSON only.",
-          },
-          {
-            role: "user",
-            content: prompt,
-          },
-        ],
-        temperature: 0.7,
-      });
-
-      const rawContent = completion.choices[0]?.message?.content;
-
-      if (!rawContent) {
-        throw new Error("AI did not return any content.");
-      }
-
-      const parsedContent = JSON.parse(rawContent);
-
-      await saveGeneratedDocument({
-        userId: req.user._id,
-        type: "resume",
-        title: jobTitle,
-        language,
-        tone,
-        source: "openai",
-        input: {
-          jobTitle,
-          experienceLevel,
-          skills,
-          targetRole,
-        },
-        output: parsedContent,
-      });
-
-      return res.status(200).json({
-        success: true,
-        source: "openai",
-        remainingCredits: user.aiCredits,
-        data: parsedContent,
-      });
-    } catch (aiError) {
-      console.error("OpenAI fallback triggered:", aiError.message);
-
-      const output = generateMockResumeContent({
-        jobTitle,
-        experienceLevel,
-        skills,
-        targetRole,
-        language,
-        tone,
-      });
-
-      await saveGeneratedDocument({
-        userId: req.user._id,
-        type: "resume",
-        title: jobTitle,
-        language,
-        tone,
-        source: "mock",
-        input: {
-          jobTitle,
-          experienceLevel,
-          skills,
-          targetRole,
-        },
-        output,
-      });
-
-      return res.status(200).json({
-        success: true,
-        source: "mock",
-        message: "OpenAI unavailable, generated demo content instead.",
-        remainingCredits: user.aiCredits,
-        data: output,
-      });
-    }
+    return res.status(200).json({
+      success: true,
+      source: provider,
+      remainingCredits,
+      data: output,
+    });
   } catch (error) {
-    console.error("AI generation error:", error);
+    console.error("Resume AI generation error:", error.message);
 
-    return res.status(error.statusCode || 500).json({
+    return res.status(error.statusCode || 502).json({
       success: false,
-      message: error.message || "Failed to generate resume content.",
+      code: "AI_GENERATION_FAILED",
+      message:
+        error.statusCode === 403
+          ? error.message
+          : "We could not generate a reliable result. No AI credit was charged. Please try again.",
     });
   }
 };
@@ -297,115 +225,89 @@ export const generateCoverLetter = async (req, res) => {
       companyName,
       applicantName,
       skills,
+      achievements,
+      experienceSummary,
       jobDescription,
       language = "English",
       tone = "Professional",
     } = req.body;
 
-    if (!jobTitle || !companyName || !applicantName || !skills) {
+    if (!cleanText(jobTitle) || !cleanText(companyName) || !cleanText(applicantName) || !cleanText(skills)) {
       return res.status(400).json({
         success: false,
-        message:
-          "Job title, company name, applicant name, and skills are required.",
+        message: "Job title, company name, applicant name, and skills are required.",
       });
     }
 
-    const user = await checkAndConsumeCredit(req.user._id);
+    const monthStart = new Date(
+      Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1)
+    );
+    const monthlyLimit = Number(req.user.monthlyCoverLetterLimit || 1);
+    const monthlyUsage = await GeneratedDocument.countDocuments({
+      user: req.user._id,
+      type: "cover_letter",
+      createdAt: { $gte: monthStart },
+    });
 
-    let coverLetter;
-
-    if (language === "Bangla") {
-      coverLetter = `
-প্রিয় Hiring Manager,
-
-আমি ${companyName}-এর ${jobTitle} পদের জন্য আবেদন করতে আগ্রহী। ${skills} বিষয়ে আমার hands-on অভিজ্ঞতা রয়েছে এবং আমি modern, responsive ও user-friendly web application তৈরি করতে ভালোবাসি।
-
-আমার recent projects-এ full-stack application, dashboard system, authentication flow, REST API integration এবং polished frontend interface নিয়ে কাজ করেছি। এই অভিজ্ঞতাগুলো আমাকে clean code, scalable architecture এবং real product thinking সম্পর্কে ভালো ধারণা দিয়েছে।
-
-${
-  jobDescription
-    ? "আপনাদের job requirements দেখে মনে হয়েছে আমার skills এই role-এর সাথে ভালোভাবে match করে, এবং আমি আপনাদের team-এ value add করতে পারব।"
-    : "আমি বিশ্বাস করি আমার technical skill, শেখার আগ্রহ এবং attention to detail আমাকে আপনাদের team-এ কার্যকরভাবে contribute করতে সাহায্য করবে।"
-}
-
-আমার application consider করার জন্য ধন্যবাদ। আমি ${companyName}-এ কীভাবে contribute করতে পারি, সে বিষয়ে আলোচনা করার সুযোগ পেলে আনন্দিত হব।
-
-শুভেচ্ছান্তে,
-${applicantName}
-`.trim();
-    } else if (language === "Bangla + English") {
-      coverLetter = `
-Dear Hiring Manager,
-
-I am excited to apply for the ${jobTitle} position at ${companyName}. ${skills} নিয়ে আমার hands-on experience আছে, and I enjoy building modern, responsive, and user-friendly web applications that solve real business problems.
-
-In my recent projects, I worked on full-stack applications, dashboard systems, authentication flows, REST API integrations, and polished frontend interfaces. এই experience গুলো আমাকে clean code, scalable architecture, and practical product thinking develop করতে help করেছে।
-
-${
-  jobDescription
-    ? "After reviewing the job requirements, I believe my skills align well with your needs and I would be excited to contribute to your team."
-    : "I am confident that my technical skills, attention to detail, and willingness to learn would allow me to contribute effectively to your team."
-}
-
-Thank you for considering my application. I would welcome the opportunity to discuss how I can contribute to ${companyName}.
-
-Sincerely,
-${applicantName}
-`.trim();
-    } else {
-      coverLetter = `
-Dear Hiring Manager,
-
-I am excited to apply for the ${jobTitle} position at ${companyName}. As a motivated developer with hands-on experience in ${skills}, I enjoy building modern, responsive, and user-friendly web applications that solve real business problems.
-
-In my recent projects, I have worked on full-stack applications, dashboard systems, authentication flows, REST API integrations, and polished frontend interfaces. These experiences helped me develop a strong understanding of clean code, scalable architecture, and practical product thinking.
-
-${
-  jobDescription
-    ? "After reviewing the job requirements, I believe my skills align well with your needs and I would be excited to contribute to your team."
-    : "I am confident that my technical skills, attention to detail, and willingness to learn would allow me to contribute effectively to your team."
-}
-
-Thank you for considering my application. I would welcome the opportunity to discuss how I can contribute to ${companyName}.
-
-Sincerely,
-${applicantName}
-`.trim();
+    if (monthlyUsage >= monthlyLimit) {
+      return res.status(403).json({
+        success: false,
+        code: "COVER_LETTER_LIMIT_REACHED",
+        message: `Your plan includes ${monthlyLimit} cover letter${monthlyLimit === 1 ? "" : "s"} per calendar month.`,
+      });
     }
+
+    const safeInput = {
+      jobTitle: cleanText(jobTitle, 160),
+      companyName: cleanText(companyName, 160),
+      applicantName: cleanText(applicantName, 160),
+      skills: cleanText(skills, 2500),
+      achievements: cleanText(achievements, 4000),
+      experienceSummary: cleanText(experienceSummary, 5000),
+      jobDescription: cleanText(jobDescription, 15000),
+      language,
+      tone,
+    };
+
+    const { output, provider, remainingCredits } = await runCreditedGeneration({
+      userId: req.user._id,
+      generate: () =>
+        generateStructuredOutput({
+          userId: req.user._id,
+          schemaName: "careerpilot_cover_letter",
+          schema: coverLetterSchema,
+          instructions: `You are CareerPilot AI, an expert job application writer. Write a human, specific cover letter using only facts the applicant supplied. Never invent experience, achievements, company facts, or metrics. Do not repeat the resume or use generic clichés. ${getLanguageInstruction(language)}`,
+          input: `Create a concise cover letter for this application.\n\n${JSON.stringify(safeInput, null, 2)}\n\nRequirements:\n- 250-350 words when enough evidence exists; shorter when evidence is limited.\n- Connect supplied evidence to the most important job requirements.\n- Use the requested ${tone} tone.\n- Do not use placeholders, markdown headings, or unsupported claims.\n- missingInformation must list facts that would make the letter stronger but were not supplied.`,
+        }),
+    });
 
     await saveGeneratedDocument({
       userId: req.user._id,
       type: "cover_letter",
-      title: `${jobTitle} at ${companyName}`,
+      title: `${safeInput.jobTitle} at ${safeInput.companyName}`,
       language,
       tone,
-      source: "mock",
-      input: {
-        jobTitle,
-        companyName,
-        applicantName,
-        skills,
-        jobDescription,
-      },
-      output: {
-        coverLetter,
-      },
+      input: safeInput,
+      output,
+      source: provider,
     });
 
     return res.status(200).json({
       success: true,
-      source: "mock",
-      remainingCredits: user.aiCredits,
-      data: {
-        coverLetter,
-      },
+      source: provider,
+      remainingCredits,
+      data: output,
     });
   } catch (error) {
-    console.error("Cover letter generation error:", error);
+    console.error("Cover letter generation error:", error.message);
 
-    return res.status(error.statusCode || 500).json({
+    return res.status(error.statusCode || 502).json({
       success: false,
-      message: error.message || "Failed to generate cover letter.",
+      code: "AI_GENERATION_FAILED",
+      message:
+        error.statusCode === 403
+          ? error.message
+          : "We could not generate a reliable cover letter. No AI credit was charged. Please try again.",
     });
   }
 };
