@@ -22,16 +22,24 @@ app.set("trust proxy", 1);
 app.disable("x-powered-by");
 app.use(helmet());
 
+const configuredClientOrigins = String(process.env.CLIENT_URL || "")
+  .split(",")
+  .map((origin) => origin.trim().replace(/\/+$/, ""))
+  .filter(Boolean);
+
 const allowedOrigins = [
-  process.env.CLIENT_URL,
+  ...configuredClientOrigins,
+  "https://careerpilot-ai-rho.vercel.app",
   "http://localhost:5173",
   "http://127.0.0.1:5173",
-].filter(Boolean);
+];
 
 app.use(
   cors({
     origin(origin, callback) {
-      if (!origin || allowedOrigins.includes(origin)) {
+      const normalizedOrigin = origin?.replace(/\/+$/, "");
+
+      if (!normalizedOrigin || allowedOrigins.includes(normalizedOrigin)) {
         callback(null, true);
         return;
       }
@@ -58,8 +66,48 @@ app.get("/", (req, res) => {
   });
 });
 
-app.get("/api/health", (req, res) => {
-  const databaseReady = mongoose.connection.readyState === 1;
+let weakJwtWarningShown = false;
+
+const validateRuntimeConfig = () => {
+  const missing = ["MONGO_URI", "JWT_SECRET"].filter((name) => !process.env[name]);
+  if (missing.length > 0) throw new Error(`Missing required environment variables: ${missing.join(", ")}`);
+
+  if (
+    process.env.NODE_ENV === "production" &&
+    process.env.JWT_SECRET.length < 32 &&
+    !weakJwtWarningShown
+  ) {
+    weakJwtWarningShown = true;
+    console.warn("JWT_SECRET should be rotated to a value with at least 32 characters.");
+  }
+};
+
+const ensureApiReady = async (req, res, next) => {
+  try {
+    validateRuntimeConfig();
+    await connectDB();
+    return next();
+  } catch (error) {
+    console.error("API dependency check failed:", error.message);
+    return res.status(503).json({
+      success: false,
+      message: "The service is temporarily unavailable. Please try again shortly.",
+    });
+  }
+};
+
+app.get("/api/health", async (req, res) => {
+  let databaseReady = mongoose.connection.readyState === 1;
+
+  if (!databaseReady) {
+    try {
+      validateRuntimeConfig();
+      await connectDB();
+      databaseReady = mongoose.connection.readyState === 1;
+    } catch (error) {
+      console.error("Health check dependency failed:", error.message);
+    }
+  }
 
   return res.status(databaseReady ? 200 : 503).json({
     success: databaseReady,
@@ -75,6 +123,7 @@ app.get("/api/health", (req, res) => {
   });
 });
 
+app.use("/api", ensureApiReady);
 app.use("/api/auth", authLimiter, authRoutes);
 app.use("/api/ai", aiRoutes);
 app.use("/api/resumes", resumeRoutes);
@@ -107,32 +156,19 @@ app.use((error, req, res, next) => {
 
 const PORT = process.env.PORT || 5000;
 
-const validateRuntimeConfig = () => {
-  const missing = ["MONGO_URI", "JWT_SECRET"].filter((name) => !process.env[name]);
-  if (missing.length > 0) throw new Error(`Missing required environment variables: ${missing.join(", ")}`);
-
-  if (process.env.NODE_ENV === "production" && process.env.JWT_SECRET.length < 32) {
-    throw new Error("JWT_SECRET must be at least 32 characters in production.");
-  }
-};
-
 const start = async () => {
   validateRuntimeConfig();
   await connectDB();
-
-  if (!process.env.VERCEL) {
-    app.listen(PORT, () => {
-      console.log(`Server running on port ${PORT}`);
-    });
-  }
+  app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+  });
 };
 
-try {
-  await start();
-} catch (error) {
-  console.error(`Server startup failed: ${error.message}`);
-  if (!process.env.VERCEL) process.exit(1);
-  throw error;
+if (!process.env.VERCEL) {
+  start().catch((error) => {
+    console.error(`Server startup failed: ${error.message}`);
+    process.exit(1);
+  });
 }
 
 export default app;
